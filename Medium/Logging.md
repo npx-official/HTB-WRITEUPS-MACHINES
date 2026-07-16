@@ -1,4 +1,4 @@
-# Logging - HackTheBox Writeup
+﻿# Logging - HackTheBox Writeup
 
 **Status:**  _Work in progress — user foothold achieved as `msa_health$`; root path under enumeration via `monitor.ps1`._
 

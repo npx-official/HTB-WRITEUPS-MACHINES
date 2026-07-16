@@ -1,13 +1,8 @@
 # Checkpoint — HTB Writeup
 
-
-> **Machine:** Checkpoint  
-> **Difficulty:** Medium  
-> **Platform:** Hack The Box  
-> **Date:** 13th June, 2026  
-> **Prepared By:**  AnuragTaparia 
-> **Machine Author:**   
-
+**Platform:** HackTheBox  
+**Difficulty:** Medium  
+**Status:** Complete
 
 **Initial credentials:** `alex.turner / Checkpoint2024!`
 

