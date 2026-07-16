@@ -52,7 +52,12 @@
 |:--------|:-----------|:-----|
 | **Mythical** | Advanced | [Writeup](./ProLabs/Mythical.md) |
 
----
+### 🏰 Fortresses
+
+| Machine | Difficulty | Link |
+|:--------|:-----------|:-----|
+| **Akerva** | - | [Writeup](...) |
+| **Faraday** | - | [Writeup](...) |
 
 
 ⭐ **Happy Hacking!**
