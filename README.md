@@ -54,8 +54,8 @@
 
 ### 🏰 Fortresses
 
-| Machine | Difficulty | Status | Link |
-|:--------|:-----------|--------|:-----|
+| Machine | Status | Link |
+|:--------|--------|:-----|
 | **Akerva** | 📝 Planned | [Writeup](...) |
 | **Faraday** |📝 Planned |  [Writeup](...) |
 | **AWS** | 📝 Planned |  [Writeup](...) |
