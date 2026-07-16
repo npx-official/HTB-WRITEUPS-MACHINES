@@ -39,7 +39,7 @@
 | **Logging** | Medium | [Writeup](./Medium/Logging.md) |
 | **Checkpoint** | Medium | [Writeup](./Medium/Checkpoint.md) |
 
-### 🪟 Windows
+### 🪟 Windows - Hard
 
 | Machine | Difficulty | Link |
 |:--------|:-----------|:-----|
