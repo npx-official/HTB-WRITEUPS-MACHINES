@@ -54,10 +54,13 @@
 
 ### 🏰 Fortresses
 
-| Machine | Difficulty | Link |
-|:--------|:-----------|:-----|
-| **Akerva** | - | [Writeup](...) |
-| **Faraday** | - | [Writeup](...) |
-
+| Machine | Difficulty | Status | Link |
+|:--------|:-----------|--------|:-----|
+| **Akerva** | 📝 Planned | [Writeup](...) |
+| **Faraday** |📝 Planned |  [Writeup](...) |
+| **AWS** | 📝 Planned |  [Writeup](...) |
+| **Synacktiv** | 📝 Planned | [Writeup](...) |
+| **Context** | 📝 Planned |  [Writeup](...) |
+| **Jet** | 📝 Planned | [Writeup](...) |
 
 ⭐ **Happy Hacking!**
