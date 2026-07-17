@@ -1,18 +1,15 @@
 # 🚀 HTB Writeups - Machines
- 
-   ```bash                                                                                                                                          
-                                                                                                                                                      
-░▒▓█▓▒░░▒▓█▓▒░▒▓████████▓▒░▒▓███████▓▒░       ░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓███████▓▒░░▒▓█▓▒░▒▓████████▓▒░▒▓████████▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓███████▓▒░ ░▒▓███████▓▒░ 
-░▒▓█▓▒░░▒▓█▓▒░  ░▒▓█▓▒░   ░▒▓█▓▒░░▒▓█▓▒░      ░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░  ░▒▓█▓▒░   ░▒▓█▓▒░      ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░        
-░▒▓█▓▒░░▒▓█▓▒░  ░▒▓█▓▒░   ░▒▓█▓▒░░▒▓█▓▒░      ░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░  ░▒▓█▓▒░   ░▒▓█▓▒░      ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░        
-░▒▓████████▓▒░  ░▒▓█▓▒░   ░▒▓███████▓▒░       ░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓███████▓▒░░▒▓█▓▒░  ░▒▓█▓▒░   ░▒▓██████▓▒░ ░▒▓█▓▒░░▒▓█▓▒░▒▓███████▓▒░ ░▒▓██████▓▒░  
-░▒▓█▓▒░░▒▓█▓▒░  ░▒▓█▓▒░   ░▒▓█▓▒░░▒▓█▓▒░      ░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░  ░▒▓█▓▒░   ░▒▓█▓▒░      ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░             ░▒▓█▓▒░ 
-░▒▓█▓▒░░▒▓█▓▒░  ░▒▓█▓▒░   ░▒▓█▓▒░░▒▓█▓▒░      ░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░  ░▒▓█▓▒░   ░▒▓█▓▒░      ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░             ░▒▓█▓▒░ 
-░▒▓█▓▒░░▒▓█▓▒░  ░▒▓█▓▒░   ░▒▓███████▓▒░        ░▒▓█████████████▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░  ░▒▓█▓▒░   ░▒▓████████▓▒░░▒▓██████▓▒░░▒▓█▓▒░      ░▒▓███████▓▒░  
-                                                                                                                                                        
-                                                                                                                                                        
-                                                                                                                                                     
-```                                         
+
+```bash
+░▒▓█▓▒░░▒▓█▓▒░▒▓████████▓▒░▒▓███████▓▒░       ░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓███████▓▒░░▒▓█▓▒░▒▓████████▓▒░▒▓████████▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓███████▓▒░ ░▒▓███████▓▒░      
+░▒▓█▓▒░░▒▓█▓▒░  ░▒▓█▓▒░   ░▒▓█▓▒░░▒▓█▓▒░      ░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░  ░▒▓█▓▒░   ░▒▓█▓▒░      ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░             
+░▒▓█▓▒░░▒▓█▓▒░  ░▒▓█▓▒░   ░▒▓█▓▒░░▒▓█▓▒░      ░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░  ░▒▓█▓▒░   ░▒▓█▓▒░      ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░             
+░▒▓████████▓▒░  ░▒▓█▓▒░   ░▒▓███████▓▒░       ░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓███████▓▒░░▒▓█▓▒░  ░▒▓█▓▒░   ░▒▓██████▓▒░ ░▒▓█▓▒░░▒▓█▓▒░▒▓███████▓▒░ ░▒▓██████▓▒░       
+░▒▓█▓▒░░▒▓█▓▒░  ░▒▓█▓▒░   ░▒▓█▓▒░░▒▓█▓▒░      ░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░  ░▒▓█▓▒░   ░▒▓█▓▒░      ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░             ░▒▓█▓▒░      
+░▒▓█▓▒░░▒▓█▓▒░  ░▒▓█▓▒░   ░▒▓█▓▒░░▒▓█▓▒░      ░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░  ░▒▓█▓▒░   ░▒▓█▓▒░      ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░             ░▒▓█▓▒░      
+░▒▓█▓▒░░▒▓█▓▒░  ░▒▓█▓▒░   ░▒▓███████▓▒░        ░▒▓█████████████▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░  ░▒▓█▓▒░   ░▒▓████████▓▒░░▒▓██████▓▒░░▒▓█▓▒░      ░▒▓███████▓▒░       
+```
+
 > Machine writeups for Hack The Box
 
 ---
@@ -20,55 +17,128 @@
 ## 📂 Machines
 
 ### 🐧 Linux - Easy
-| Machine | Difficulty | Link |
-|:--------|:-----------|:-----|
-| **Paperwork** | Easy | [Writeup](https://npx-official.github.io/HTB-WRITEUPS-MACHINES/easy/Paperwork.html) |
-| **Enigma** | Easy | [Writeup](./easy/Enigma.md) |
-| **Connected** | Easy | [Writeup](./easy/Connected.md) |
-| **CCTV** | Easy | [Writeup](./easy/cctv.md) |
-| **Kobold** | Easy | [Writeup](./easy/Kobold.md) |
-| **MonitorsFour** | Easy | [Writeup](./easy/MonitorsFour.md) |
-| **Orion** | Easy | [Writeup](./easy/Orion.md) |
-| **Reactor** | Easy | [Writeup](./easy/Reactor.md) |
-| **Silentium** | Easy | [Writeup](./easy/Silentium.md) |
+
+| Machine | Link |
+|:--------|:-----|
+| **Paperwork** | [Writeup](./Machines/linux/easy/Paperwork.html) |
+| **Enigma** | [Writeup](./Machines/linux/easy/Enigma.md) |
+| **Connected** | [Writeup](./Machines/linux/easy/Connected.md) |
+| **CCTV** | [Writeup](./Machines/linux/easy/cctv.md) |
+| **Kobold** | [Writeup](./Machines/linux/easy/Kobold.md) |
+| **MonitorsFour** | [Writeup](./Machines/linux/easy/MonitorsFour.md) |
+| **Orion** | [Writeup](./Machines/linux/easy/Orion.md) |
+| **Reactor** | [Writeup](./Machines/linux/easy/Reactor.md) |
+| **Silentium** | [Writeup](./Machines/linux/easy/Silentium.md) |
+
+---
+
 ### 🐧 Linux - Medium
-| Machine | Difficulty | Link |
-|:--------|:-----------|:-----|
-| **Fireflow** | Medium | [Writeup](./Medium/Fireflow.md) |
-| **MakeSense** | Medium | [Writeup](./Medium/MakeSense.md) |
-| **DevArea** | Medium | [Writeup](./Medium/DevArea.md) |
-| **DevHub** | Medium | [Writeup](./Medium/DevHub.md) |
-| **Overwatch** | Medium | [Writeup](./Medium/Overwatch.md) |
-| **VariaType** | Medium | [Writeup](./Medium/VariaType.md) |
-| **Logging** | Medium | [Writeup](./Medium/Logging.md) |
-| **Checkpoint** | Medium | [Writeup](./Medium/Checkpoint.md) |
+
+| Machine | Link |
+|:--------|:-----|
+| **Fireflow** | [Writeup](./Machines/linux/Medium/Fireflow.md) |
+| **MakeSense** | [Writeup](./Machines/linux/Medium/MakeSense.md) |
+| **DevArea** | [Writeup](./Machines/linux/Medium/DevArea.md) |
+| **DevHub** | [Writeup](./Machines/linux/Medium/DevHub.md) |
+| **Overwatch** | [Writeup](./Machines/linux/Medium/Overwatch.md) |
+| **VariaType** | [Writeup](./Machines/linux/Medium/VariaType.md) |
+| **Logging** | [Writeup](./Machines/linux/Medium/Logging.md) |
+| **Checkpoint** | [Writeup](./Machines/linux/Medium/Checkpoint.md) |
+
+---
+
+### 🐧 Linux - Hard
+
+| Machine | Link |
+|:--------|:-----|
+| **Nimbus** | [Writeup](./Machines/linux/Hard/Nimbus.md) |
+
+---
 
 ### 🪟 Windows - Hard
 
-| Machine | Difficulty | Link |
-|:--------|:-----------|:-----|
-| **Garfield** | Hard | [Writeup](./Hard/Garfield.md) |
-| **Ghostlink** | Hard | [Writeup](./Hard/Ghostlink.md) |
+| Machine | Link |
+|:--------|:-----|
+| **Garfield** | [Writeup](./Machines/windows/Hard/Garfield.md) |
+| **Ghostlink** | [Writeup](./Machines/windows/Hard/Ghostlink.md) |
+
+---
 
 ### 🏆 ProLabs
 
-| Machine | Difficulty | Link |
-|:--------|:-----------|:-----|
-| **Mythical** | Advanced | [Writeup](./ProLabs/Mythical.md) |
+| Machine | Link |
+|:--------|:-----|
+| **Mythical** | [Writeup](./ProLabs/Mythical.md) |
 
-### 🏰 Fortresses
+---
 
-| Machine | Status | Link |
-|:--------|--------|:-----|
-| **Akerva** | 📝 Planned | [Writeup](...) |
-| **Faraday** |📝 Planned |  [Writeup](...) |
-| **AWS** | 📝 Planned |  [Writeup](...) |
-| **Synacktiv** | 📝 Planned | [Writeup](...) |
-| **Context** | 📝 Planned |  [Writeup](...) |
-| **Jet** | 📝 Planned | [Writeup](...) |
+### 🏰 Fortresses (Planned)
 
-                                                                                                                        
-```bash                                                                                                  
+| Machine | Status |
+|:--------|:-------|
+| **Akerva** | 📝 Planned |
+| **Faraday** | 📝 Planned |
+| **AWS** | 📝 Planned |
+| **Synacktiv** | 📝 Planned |
+| **Context** | 📝 Planned |
+| **Jet** | 📝 Planned |
+
+---
+
+## 🗂️ Folder Structure
+
+```bash
+HTB-WRITEUPS-MACHINES/
+├── README.md
+├── Machines/
+│   ├── linux/
+│   │   ├── easy/
+│   │   │   ├── cctv.md
+│   │   │   ├── Connected.md
+│   │   │   ├── Enigma.md
+│   │   │   ├── Kobold.md
+│   │   │   ├── MonitorsFour.md
+│   │   │   ├── Orion.md
+│   │   │   ├── Paperwork.html
+│   │   │   ├── Reactor.md
+│   │   │   └── Silentium.md
+│   │   ├── Medium/
+│   │   │   ├── Checkpoint.md
+│   │   │   ├── DevArea.md
+│   │   │   ├── DevHub.md
+│   │   │   ├── Fireflow.md
+│   │   │   ├── Logging.md
+│   │   │   ├── MakeSense.md
+│   │   │   ├── Overwatch.md
+│   │   │   └── VariaType.md
+│   │   └── Hard/
+│   │       └── Nimbus.md
+│   └── windows/
+│       ├── Easy/
+│       ├── Medium/
+│       └── Hard/
+│           ├── Garfield.md
+│           └── Ghostlink.md
+└── ProLabs/
+    └── Mythical.md
+```
+
+---
+
+## 📊 Statistics
+
+| Category | Count |
+|:---------|:------|
+| Linux - Easy | 9 |
+| Linux - Medium | 8 |
+| Linux - Hard | 1 |
+| Windows - Hard | 2 |
+| ProLabs | 1 |
+| **Total** | **21** |
+
+---
+
+```bash
  __    __                                                __    __                      __        __                     
 /  |  /  |                                              /  |  /  |                    /  |      /  |                    
 $$ |  $$ |  ______    ______    ______   __    __       $$ |  $$ |  ______    _______ $$ |   __ $$/  _______    ______  
@@ -82,4 +152,5 @@ $$/   $$/  $$$$$$$/ $$$$$$$/  $$$$$$$/   $$$$$$$ |      $$/   $$/  $$$$$$$/  $$$
                     $$ |      $$ |      $$    $$/                                                             $$    $$/ 
                     $$/       $$/        $$$$$$/                                                               $$$$$$/  
 ```
+
 ⭐ **Happy Hacking!**
